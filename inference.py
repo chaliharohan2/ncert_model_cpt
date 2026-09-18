@@ -4,8 +4,8 @@ import sys
 import torch
 
 # model_name = "google/gemma-3-1b-it"
-model_name = "google/gemma-3-1b-pt"
-# model_name = "/home/nz-dgx-spark-01/Documents/Nyalazone/ncert_model_content_training/ncert_model_cpt/models/gemma_3_1B_pt_ncert_cpt"
+# model_name = "google/gemma-3-1b-pt"
+model_name = "/home/nz-dgx-spark-01/Documents/Nyalazone/ncert_model_content_training/ncert_model_cpt/models/gemma_3_1B_pt_ncert_cpt_v2"
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 stream = True
 

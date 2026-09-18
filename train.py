@@ -7,7 +7,8 @@ from datasets import Dataset
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 MAX_LENGTH = 8000
-MODEL_SAVE_PATH = "/home/nz-dgx-spark-01/Documents/Nyalazone/ncert_model_content_training/ncert_model_cpt/models/gemma_3_1B_pt_ncert_cpt"
+DATASET_PATH = "/home/nz-dgx-spark-01/Documents/Nyalazone/ncert_model_content_training/dataset/cpt_pool.jsonl"
+MODEL_SAVE_PATH = "/home/nz-dgx-spark-01/Documents/Nyalazone/ncert_model_content_training/ncert_model_cpt/models/gemma_3_1B_pt_ncert_cpt_v4"
 def tokenize_fn(batch, tokenizer: AutoTokenizer):
     return tokenizer(
         batch["text"],
@@ -23,7 +24,7 @@ model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=model
 model.to(DEVICE)
 
 if __name__ == "__main__":
-    texts = load_dataset(path="/home/nz-dgx-spark-01/Documents/Nyalazone/ncert_model_content_training/dataset/cpt_pool.jsonl")
+    texts = load_dataset(path=DATASET_PATH)
     dataset = Dataset.from_dict({"text": texts})
     final_dataset = dataset.map(
         tokenize_fn,
@@ -32,12 +33,18 @@ if __name__ == "__main__":
         fn_kwargs={"tokenizer": tokenizer}
     )
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+
+    """
+    v1 and v2 were 3 epochs
+    v3 is 8 epochs
+    v4 is 15 epochs
+    """
     training_args = TrainingArguments(
         output_dir=MODEL_SAVE_PATH,
         learning_rate=1.0e-5,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=1,
-        num_train_epochs=3,
+        num_train_epochs=15,
         seed=64,
         lr_scheduler_type="cosine",
         warmup_steps=0.03,
