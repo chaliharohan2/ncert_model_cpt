@@ -34,7 +34,10 @@ MODELS = {
 }
 
 MAX_NEW_TOKENS = 256
-BATCH_SIZE = 8
+BATCH_SIZE = 1    # Batched, left-padded generation corrupted the first token on some items
+                  # (identically across all three models, so it was the pipeline, not the
+                  # models). Batch size 1 means no padding at all. Keep it at 1.
+REP_PENALTY = 1.0  # set via --repetition-penalty; 1.0 = off (plain greedy, comparable runs)
 VERBATIM_N = 15   # a 15-word run shared with the book counts as copying
 
 # identical to the template in train_sft.py
@@ -197,6 +200,7 @@ def generate(name, cfg, items):
                                       return_tensors="pt", return_dict=True).to("cuda")
         with torch.inference_mode():
             gen = model.generate(**enc, max_new_tokens=MAX_NEW_TOKENS, do_sample=False,
+                                 repetition_penalty=REP_PENALTY,
                                  eos_token_id=stop_ids, pad_token_id=tok.pad_token_id)
         new = gen[:, enc["input_ids"].shape[1]:]
         for x, row in zip(batch, new.tolist()):
@@ -281,6 +285,13 @@ def summarize(rows, items):
     s["median_words"] = sorted(r["length_words"] for r in rows)[len(rows) // 2]
     return s
 
+def as_list(v):
+    """A few dataset items store must_cover as a single string; iterating a string
+    yields characters ('covers: t | covers: h ...'). Normalise to a list."""
+    if v is None:
+        return []
+    return [v] if isinstance(v, str) else list(v)
+
 def export_tier_b(name, rows, items, out_dir):
     by_id = {x["eval_id"]: x for x in items}
     path = os.path.join(out_dir, f"tierB_{name}.csv")
@@ -294,15 +305,15 @@ def export_tier_b(name, rows, items, out_dir):
             cat, ans = r["category"], r["answer"]
             auto = []
             if cat == "summary":
-                checklist = [f"covers: {c}" for c in it.get("must_cover", [])] + [f"does NOT include: {c}" for c in it.get("must_not_include", [])]
+                checklist = [f"covers: {c}" for c in as_list(it.get("must_cover"))] + [f"does NOT include: {c}" for c in as_list(it.get("must_not_include"))]
                 mw = it.get("max_words")
                 if mw:
                     auto.append(f"words={r['length_words']}/{mw} {'OK' if r['length_words'] <= mw else 'OVER'}")
-                leaked = [c for c in it.get("must_not_include", []) if c.lower() in ans.lower()]
+                leaked = [c for c in as_list(it.get("must_not_include")) if c.lower() in ans.lower()]
                 if leaked:
                     auto.append(f"cross-chapter terms found: {leaked}")
             elif cat == "passage_locate":
-                checklist = [f"location: {it.get('expected_location')}"] + [f"covers: {c}" for c in it.get("must_cover", [])]
+                checklist = [f"location: {it.get('expected_location')}"] + [f"covers: {c}" for c in as_list(it.get("must_cover"))]
                 auto.append(f"verbatim_run={r['verbatim_words']} {'FAIL' if r['verbatim_words'] >= VERBATIM_N else 'OK'}")
             elif cat == "question_bank":
                 n_q = len([ln for ln in ans.splitlines() if ln.strip().endswith("?")])
@@ -354,7 +365,12 @@ def main():
     ap.add_argument("--out", default=OUT_DIR)
     ap.add_argument("--reuse", action="store_true", help="skip generation if a generations file exists")
     ap.add_argument("--selftest", action="store_true", help="score the reference answers instead of a model")
+    ap.add_argument("--repetition-penalty", type=float, default=1.0,
+                    help="diagnostic only; results are written under a separate name (e.g. sft_v1_rp1.15)")
     a = ap.parse_args()
+    global REP_PENALTY
+    REP_PENALTY = a.repetition_penalty
+    suffix = "" if REP_PENALTY == 1.0 else f"_rp{REP_PENALTY}"
 
     os.makedirs(a.out, exist_ok=True)
     items = [json.loads(l) for l in open(a.eval) if l.strip()]
@@ -365,7 +381,8 @@ def main():
 
     summaries = {}
     targets = ["REFERENCE"] if a.selftest else a.models
-    for name in targets:
+    for model_key in targets:
+        name = model_key + ("" if a.selftest else suffix)
         gpath = os.path.join(a.out, f"generations_{name}.jsonl")
         if a.selftest:
             gens = [{"eval_id": x["eval_id"], "answer": x.get("reference") or "", "raw": x.get("reference") or "",
@@ -374,7 +391,7 @@ def main():
             gens = [json.loads(l) for l in open(gpath)]
             print(f"[{name}] reusing {gpath}")
         else:
-            gens = generate(name, MODELS[name], items)
+            gens = generate(name, MODELS[model_key], items)
             with open(gpath, "w") as f:
                 for g in gens:
                     f.write(json.dumps(g, ensure_ascii=False) + "\n")
