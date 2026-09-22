@@ -36,7 +36,8 @@ CHAT_TEMPLATE = (
     "<start_of_turn>user\n{{ message['content'] | trim }}<end_of_turn>\n"
     "{% elif message['role'] == 'assistant' %}"
     "<start_of_turn>model\n"
-    "{% generation %}{{ message['content'] | trim }}<end_of_turn>{% endgeneration %}\n"
+    "{% generation %}{{ message['content'] | trim }}<end_of_turn>{% endgeneration %}"
+    "{{ '\\n' }}"  # newline emitted as output: jinja's trim_blocks deletes a literal one right after a block tag
     "{% endif %}"
     "{% endfor %}"
     "{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}"

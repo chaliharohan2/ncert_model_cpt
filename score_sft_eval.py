@@ -48,7 +48,8 @@ CHAT_TEMPLATE = (
     "<start_of_turn>user\n{{ message['content'] | trim }}<end_of_turn>\n"
     "{% elif message['role'] == 'assistant' %}"
     "<start_of_turn>model\n"
-    "{% generation %}{{ message['content'] | trim }}<end_of_turn>{% endgeneration %}\n"
+    "{% generation %}{{ message['content'] | trim }}<end_of_turn>{% endgeneration %}"
+    "{{ '\\n' }}"  # newline emitted as output: jinja's trim_blocks deletes a literal one right after a block tag
     "{% endif %}"
     "{% endfor %}"
     "{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}"
@@ -316,7 +317,7 @@ def export_tier_b(name, rows, items, out_dir):
                 checklist = [f"location: {it.get('expected_location')}"] + [f"covers: {c}" for c in as_list(it.get("must_cover"))]
                 auto.append(f"verbatim_run={r['verbatim_words']} {'FAIL' if r['verbatim_words'] >= VERBATIM_N else 'OK'}")
             elif cat == "question_bank":
-                n_q = len([ln for ln in ans.splitlines() if ln.strip().endswith("?")])
+                n_q = len([ln for ln in ans.splitlines() if ln.strip().rstrip("*_ ").endswith("?")])  # tolerate markdown like **Q?**
                 checklist = [f"{it.get('required_count')} questions", f"answerable from {it.get('must_be_answerable_from')}"]
                 auto.append(f"questions_found={n_q}/{it.get('required_count')}")
             else:  # personal_reflection

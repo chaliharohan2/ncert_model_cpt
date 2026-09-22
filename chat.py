@@ -14,6 +14,8 @@ Usage
   python chat.py --show-prompt   # also print the exact formatted prompt
   python chat.py --raw           # reproduce the old behaviour (raw text, no template)
   python chat.py --rp 1.15       # add a repetition penalty (diagnostic)
+  python chat.py --model <merged model folder>          # chat with a chat-vector merge
+  python chat.py --model <folder> --check-template      # compare its template with ours
 
 Each question is independent: SFT used single-turn examples only, so the model
 has never seen a conversation history. Don't feed previous turns back in.
@@ -22,7 +24,7 @@ import argparse
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
 
-MODEL_DIR = "/home/nz-dgx-spark-01/Documents/Nyalazone/ncert_model_content_training/ncert_model_sft/models/gemma_3_1B_ncert_sft_v1"
+MODEL_DIR = "/home/nz-dgx-spark-01/Documents/Nyalazone/ncert_model_content_training/ncert_model_merge/models/gemma_3_1B_ncert_cv8_chatvec_a1.0"
 
 # identical to the template in train_sft.py (only used if the saved tokenizer lacks one)
 CHAT_TEMPLATE = (
@@ -32,7 +34,8 @@ CHAT_TEMPLATE = (
     "<start_of_turn>user\n{{ message['content'] | trim }}<end_of_turn>\n"
     "{% elif message['role'] == 'assistant' %}"
     "<start_of_turn>model\n"
-    "{% generation %}{{ message['content'] | trim }}<end_of_turn>{% endgeneration %}\n"
+    "{% generation %}{{ message['content'] | trim }}<end_of_turn>{% endgeneration %}"
+    "{{ '\\n' }}"  # newline emitted as output: jinja's trim_blocks deletes a literal one right after a block tag
     "{% endif %}"
     "{% endfor %}"
     "{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}"
@@ -46,12 +49,34 @@ def main():
     ap.add_argument("--show-prompt", action="store_true")
     ap.add_argument("--rp", type=float, default=1.0, help="repetition penalty; 1.0 = off")
     ap.add_argument("--max-new-tokens", type=int, default=256)
+    ap.add_argument("--check-template", action="store_true",
+                    help="render a multi-turn chat with this model's own template and with the SFT "
+                         "template, report whether the text is identical, then exit")
     a = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tok = AutoTokenizer.from_pretrained(a.model)
+
+    if a.check_template:
+        msgs = [{"role": "user", "content": "How much did Lencho ask God for?"},
+                {"role": "assistant", "content": "A hundred pesos."},
+                {"role": "user", "content": "And how much did he actually get?"}]
+        sft = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                      chat_template=CHAT_TEMPLATE)
+        print("SFT template renders:\n" + repr(sft) + "\n")
+        if tok.chat_template is None:
+            print("This tokenizer has no template of its own; chat.py would use the SFT template.")
+            return
+        own = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        print("This model's own template renders:\n" + repr(own) + "\n")
+        print("IDENTICAL - the model sees exactly the same text either way."
+              if own == sft else "DIFFERENT - see the two renderings above.")
+        return
+
+    template_source = "the model's own (saved with its tokenizer)"
     if tok.chat_template is None:
         tok.chat_template = CHAT_TEMPLATE
+        template_source = "the SFT template (fallback: tokenizer had none)"
     model = AutoModelForCausalLM.from_pretrained(a.model, dtype=torch.bfloat16).to(device).eval()
 
     stop_ids = [tok.eos_token_id, tok.convert_tokens_to_ids("<end_of_turn>")]
@@ -59,7 +84,7 @@ def main():
     streamer = TextStreamer(tok, skip_prompt=True, skip_special_tokens=True)
 
     print(f"Loaded {a.model}")
-    print("Mode:", "RAW TEXT (old behaviour)" if a.raw else "chat template")
+    print("Mode:", "RAW TEXT (old behaviour)" if a.raw else f"chat template - {template_source}")
     print("Ask a question, or q to quit. Each question is answered independently.")
 
     while True:
